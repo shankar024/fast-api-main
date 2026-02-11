@@ -1,0 +1,60 @@
+version: 0.2
+
+env:
+  variables:
+    AWS_REGION: us-east-1
+    FRONTEND_REPO: frontend-app
+    BACKEND_REPO: backend-app
+    FRONTEND_CONTAINER: frontend-container
+    BACKEND_CONTAINER: backend-container
+
+    DOCKERHUB_USER: thanosda
+    DOCKERHUB_TOKEN: dckr_pat_II_a16oiVigL0H6Xnv1mKlbxaDU
+
+phases:
+  pre_build:
+    commands:
+      - echo "Setting variables..."
+      - AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+      - IMAGE_TAG=$CODEBUILD_BUILD_NUMBER
+      - echo "AWS_ACCOUNT_ID=$AWS_ACCOUNT_ID"
+      - echo "IMAGE_TAG=$IMAGE_TAG"
+
+      - echo "Logging in to Docker Hub (TEST ONLY)..."
+      - echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USER" --password-stdin
+
+      - echo "Logging in to Amazon ECR..."
+      - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+
+  build:
+    commands:
+      - echo "Building frontend Docker image..."
+      - docker build --pull=false -f frontend/Dockerfile -t $FRONTEND_REPO:$IMAGE_TAG .
+      - docker tag $FRONTEND_REPO:$IMAGE_TAG $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$FRONTEND_REPO:$IMAGE_TAG
+
+      - echo "Building backend Docker image..."
+      - docker build --pull=false -f backend/Dockerfile -t $BACKEND_REPO:$IMAGE_TAG .
+      - docker tag $BACKEND_REPO:$IMAGE_TAG $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$BACKEND_REPO:$IMAGE_TAG
+
+  post_build:
+    commands:
+      - echo "Pushing frontend image to ECR..."
+      - docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$FRONTEND_REPO:$IMAGE_TAG
+
+      - echo "Pushing backend image to ECR..."
+      - docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$BACKEND_REPO:$IMAGE_TAG
+
+      - echo "Creating imagedefinitions.json..."
+      - printf '[{"name":"%s","imageUri":"%s"},{"name":"%s","imageUri":"%s"}]' \
+          $FRONTEND_CONTAINER \
+          $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$FRONTEND_REPO:$IMAGE_TAG \
+          $BACKEND_CONTAINER \
+          $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$BACKEND_REPO:$IMAGE_TAG \
+          > imagedefinitions.json
+
+      - cat imagedefinitions.json
+
+artifacts:
+  files:
+    - imagedefinitions.json
+  discard-paths: yes
